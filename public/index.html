@@ -213,9 +213,10 @@
     .flag-explore { color: #8b5cf6; font-weight: 700; }
     .flag-exploit { color: var(--muted); }
 
-    .status-ok  { color: var(--green); }
-    .status-err { color: var(--red); }
+    .status-ok   { color: var(--green); }
+    .status-err  { color: var(--red); }
     .status-pend { color: var(--amber); }
+    .status-skip { color: var(--muted); }
 
     .trace {
       max-width: 280px;
@@ -252,6 +253,11 @@
       <option value="5000">5 s</option>
       <option value="10000">10 s</option>
     </select>
+
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+      <input type="checkbox" id="chk-telemetry" checked style="accent-color:var(--accent);" />
+      <span>Send telemetry</span>
+    </label>
 
     <button class="btn btn-start" id="btn-start" onclick="startSim()">▶ Start</button>
     <button class="btn btn-stop"  id="btn-stop"  onclick="stopSim()" disabled>■ Stop</button>
@@ -489,6 +495,9 @@ async function tick() {
   updateRow(row, recommended_model, conf, exploration_flag, decision_trace, 'pending');
 
   // ── 2. Submit /telemetry ────────────────────────────────────────────────────
+  const sendTelemetry = document.getElementById('chk-telemetry').checked;
+  if (!sendTelemetry) { finaliseRow(row, 'skip'); updateStats(); return; }
+
   const success = Math.random() > 0.05; // 95% simulated success
   try {
     const telRes = await fetch('/api/telemetry', {
@@ -580,9 +589,10 @@ function updateRow(tr, model, conf, explore, trace) {
 }
 
 function finaliseRow(tr, telStatus) {
-  tr.querySelector('.tel-cell').innerHTML = telStatus === 'ok'
-    ? '<span class="status-ok">✓</span>'
-    : `<span class="status-err">${telStatus}</span>`;
+  tr.querySelector('.tel-cell').innerHTML =
+    telStatus === 'ok'   ? '<span class="status-ok">✓</span>'  :
+    telStatus === 'skip' ? '<span class="status-skip">—</span>' :
+                           `<span class="status-err">${telStatus}</span>`;
 }
 
 // ─── Stats update ─────────────────────────────────────────────────────────────
