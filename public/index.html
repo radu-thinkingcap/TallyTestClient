@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tally Test Client</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2a2d3a;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --accent:   #6366f1;
+      --green:    #10b981;
+      --amber:    #f59e0b;
+      --red:      #ef4444;
+      --blue:     #3b82f6;
+      --purple:   #8b5cf6;
+      --mono:     'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .header-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+    .header-title span { color: var(--accent); }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .dot.running  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot.stopping { background: var(--amber); }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: auto;
+    }
+
+    label { color: var(--muted); font-size: 12px; }
+
+    select, input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 12px;
+      outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent); }
+
+    .btn {
+      border: none;
+      border-radius: 6px;
+      padding: 6px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-start  { background: var(--accent); color: #fff; }
+    .btn-stop   { background: var(--red);    color: #fff; }
+    .btn-clear  { background: var(--border); color: var(--muted); }
+
+    /* ── Stats bar ── */
+    .stats {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .stat {
+      flex: 1;
+      padding: 10px 20px;
+      border-right: 1px solid var(--border);
+    }
+    .stat:last-child { border-right: none; }
+    .stat-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-value { font-size: 20px; font-weight: 700; font-family: var(--mono); margin-top: 2px; }
+
+    /* ── Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      height: calc(100vh - 100px);
+      overflow-y: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--mono);
+      font-size: 11.5px;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+      z-index: 5;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    tbody tr:hover { background: rgba(255,255,255,0.03); }
+    tbody tr.new-row { animation: fadeIn 0.3s ease; }
+
+    @keyframes fadeIn {
+      from { background: rgba(99,102,241,0.15); }
+      to   { background: transparent; }
+    }
+
+    td {
+      padding: 7px 12px;
+      white-space: nowrap;
+      color: var(--text);
+    }
+
+    .seq     { color: var(--muted); width: 48px; }
+    .time    { color: var(--muted); }
+
+    /* Task type badges */
+    .badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .badge-code       { background: rgba(59,130,246,.15); color: #60a5fa; }
+    .badge-reasoning  { background: rgba(139,92,246,.15); color: #a78bfa; }
+    .badge-creative   { background: rgba(236,72,153,.15); color: #f472b6; }
+    .badge-math       { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .badge-retrieval  { background: rgba(16,185,129,.15); color: #34d399; }
+    .badge-synthesis  { background: rgba(99,102,241,.15); color: #818cf8; }
+    .badge-agentic    { background: rgba(239,68,68,.15); color: #f87171; }
+    .badge-classification { background: rgba(20,184,166,.15); color: #2dd4bf; }
+
+    .struct { color: #94a3b8; }
+
+    .ctx-small  { color: #10b981; }
+    .ctx-medium { color: #f59e0b; }
+    .ctx-large  { color: #ef4444; }
+    .ctx-xlarge { color: #8b5cf6; }
+
+    .num { text-align: right; color: var(--text); }
+
+    /* Model chip */
+    .model {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10.5px;
+      font-weight: 600;
+      border: 1px solid;
+    }
+    .model-haiku   { color: #10b981; border-color: rgba(16,185,129,.3); background: rgba(16,185,129,.08); }
+    .model-sonnet  { color: #ef4444; border-color: rgba(239,68,68,.3);  background: rgba(239,68,68,.08);  }
+    .model-opus    { color: #8b5cf6; border-color: rgba(139,92,246,.3); background: rgba(139,92,246,.08); }
+    .model-gpt4o   { color: #3b82f6; border-color: rgba(59,130,246,.3); background: rgba(59,130,246,.08); }
+    .model-gpt4m   { color: #f59e0b; border-color: rgba(245,158,11,.3); background: rgba(245,158,11,.08); }
+    .model-default { color: var(--muted); border-color: var(--border);  background: transparent; }
+
+    .conf { color: var(--muted); font-size: 10px; }
+
+    .flag-explore { color: #8b5cf6; font-weight: 700; }
+    .flag-exploit { color: var(--muted); }
+
+    .status-ok  { color: var(--green); }
+    .status-err { color: var(--red); }
+    .status-pend { color: var(--amber); }
+
+    .trace {
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    /* Empty state */
+    .empty {
+      padding: 80px 20px;
+      text-align: center;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .empty strong { color: rgba(255,255,255,.4); }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="header">
+  <div class="dot" id="dot"></div>
+  <div class="header-title">Tally <span>Test Client</span></div>
+
+  <div class="controls">
+    <label for="interval-select">Interval</label>
+    <select id="interval-select">
+      <option value="500">0.5 s</option>
+      <option value="1000" selected>1 s</option>
+      <option value="2000">2 s</option>
+      <option value="5000">5 s</option>
+      <option value="10000">10 s</option>
+    </select>
+
+    <button class="btn btn-start" id="btn-start" onclick="startSim()">▶ Start</button>
+    <button class="btn btn-stop"  id="btn-stop"  onclick="stopSim()" disabled>■ Stop</button>
+    <button class="btn btn-clear" id="btn-clear" onclick="clearTable()">Clear</button>
+  </div>
+</div>
+
+<!-- ── Stats ── -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Total Calls</div>
+    <div class="stat-value" id="stat-total">0</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Explore Rate</div>
+    <div class="stat-value" id="stat-explore">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Errors</div>
+    <div class="stat-value" id="stat-errors">0</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Avg Confidence</div>
+    <div class="stat-value" id="stat-conf">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Status</div>
+    <div class="stat-value" id="stat-status" style="font-size:13px;color:var(--muted)">Idle</div>
+  </div>
+</div>
+
+<!-- ── Table ── -->
+<div class="table-wrap">
+  <table id="main-table">
+    <thead>
+      <tr>
+        <th class="seq">#</th>
+        <th>Time</th>
+        <th>Task Type</th>
+        <th>Structure</th>
+        <th>Context</th>
+        <th>Complexity</th>
+        <th style="text-align:right">Tok In</th>
+        <th style="text-align:right">Tok Out</th>
+        <th>Recommended Model</th>
+        <th>Conf</th>
+        <th>Mode</th>
+        <th>Decision</th>
+        <th>Telemetry</th>
+      </tr>
+    </thead>
+    <tbody id="feed">
+      <tr>
+        <td colspan="13">
+          <div class="empty">Press <strong>▶ Start</strong> to begin generating synthetic LLM calls</div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const TASK_TYPES   = ['classification','reasoning','creative','code','math','retrieval','synthesis','agentic'];
+const STRUCT_TYPES = ['qa','multi-step','tool-call-heavy','long-form'];
+const CTX_BUCKETS  = ['small','medium','large','xlarge'];
+
+// Token ranges by context bucket
+const TOKEN_RANGES = {
+  small:  [100,  600],
+  medium: [600,  1800],
+  large:  [1800, 3200],
+  xlarge: [3200, 4000],
+};
+
+const OUTPUT_RANGE = [50, 4000];
+
+const AVAILABLE_MODELS = [
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5-20251001',
+  'gpt-4o',
+  'gpt-4o-mini',
+];
+
+// Scenario presets: task_type → likely structure types (for realistic correlation)
+const TASK_STRUCTURES = {
+  classification: ['qa'],
+  reasoning:      ['multi-step', 'qa'],
+  creative:       ['long-form', 'multi-step'],
+  code:           ['multi-step', 'tool-call-heavy'],
+  math:           ['multi-step'],
+  retrieval:      ['qa', 'multi-step'],
+  synthesis:      ['long-form', 'multi-step'],
+  agentic:        ['tool-call-heavy', 'multi-step'],
+};
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+let running      = false;
+let timer        = null;
+let seq          = 0;
+let totalCalls   = 0;
+let exploreCount = 0;
+let errorCount   = 0;
+let confSum      = 0;
+let confCount    = 0;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function randFloat(min, max) { return Math.round((min + Math.random() * (max - min)) * 100) / 100; }
+
+function uuid() {
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4)).toString(16));
+}
+
+function now() {
+  return new Date().toTimeString().slice(0, 8);
+}
+
+// ─── Envelope builder ────────────────────────────────────────────────────────
+
+function buildEnvelope() {
+  const task_type      = pick(TASK_TYPES);
+  const structure_type = pick(TASK_STRUCTURES[task_type] || STRUCT_TYPES);
+  const ctx_bucket     = pick(CTX_BUCKETS);
+  const tok_bucket     = pick(CTX_BUCKETS);
+  const complexity     = randFloat(0.1, 1.0);
+
+  const [tokMin, tokMax] = TOKEN_RANGES[ctx_bucket];
+  const tokens_input  = rand(tokMin, tokMax);
+  const tokens_output = rand(OUTPUT_RANGE[0], OUTPUT_RANGE[1]);
+  const duration_ms   = rand(300, 8000);
+
+  return {
+    envelope: {
+      schema_version:          '1.0',
+      task_type,
+      structure_type,
+      complexity_score:        complexity,
+      context_length_bucket:   ctx_bucket,
+      estimated_tokens_bucket: tok_bucket,
+      determinism_required:    Math.random() < 0.15,
+      capability_tags:         [],
+    },
+    tokens_input,
+    tokens_output,
+    duration_ms,
+  };
+}
+
+// ─── Model display helpers ────────────────────────────────────────────────────
+
+function modelClass(model) {
+  if (model.includes('haiku'))  return 'model-haiku';
+  if (model.includes('sonnet')) return 'model-sonnet';
+  if (model.includes('opus'))   return 'model-opus';
+  if (model.includes('gpt-4o-mini') || model.includes('4o-mini')) return 'model-gpt4m';
+  if (model.includes('gpt-4o') || model.includes('4o'))           return 'model-gpt4o';
+  return 'model-default';
+}
+
+function modelLabel(model) {
+  if (!model) return '—';
+  // Shorten: take last 2 dash-segments
+  const parts = model.split('-');
+  return parts.length > 2 ? parts.slice(-2).join('-') : model;
+}
+
+// ─── Simulation tick ─────────────────────────────────────────────────────────
+
+async function tick() {
+  seq++;
+  totalCalls++;
+  updateStats();
+
+  const { envelope, tokens_input, tokens_output, duration_ms } = buildEnvelope();
+  const rowSeq = seq;
+
+  // Insert pending row
+  const row = insertRow(rowSeq, envelope, tokens_input, tokens_output);
+
+  let recommended_model = '—';
+  let conf = null;
+  let exploration_flag = false;
+  let decision_trace = '';
+  let telStatus = '';
+
+  // ── 1. Call /route ──────────────────────────────────────────────────────────
+  try {
+    const routeRes = await fetch('/api/route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        semantic_envelope: envelope,
+        available_models:  AVAILABLE_MODELS,
+        available_tools:   [],
+      }),
+    });
+
+    if (routeRes.ok) {
+      const rr = await routeRes.json();
+      recommended_model = rr.recommended_model ?? '—';
+      conf              = rr.confidence_score  ?? null;
+      exploration_flag  = rr.exploration_flag  ?? false;
+      decision_trace    = rr.decision_trace    ?? '';
+      if (exploration_flag) exploreCount++;
+      if (conf !== null) { confSum += conf; confCount++; }
+    } else {
+      const body = await routeRes.json().catch(() => ({}));
+      recommended_model = 'route-err';
+      decision_trace = body?.error ?? `HTTP ${routeRes.status}`;
+      errorCount++;
+      updateStats();
+    }
+  } catch (e) {
+    recommended_model = 'route-err';
+    decision_trace = String(e);
+    errorCount++;
+    updateStats();
+  }
+
+  updateRow(row, recommended_model, conf, exploration_flag, decision_trace, 'pending');
+
+  // ── 2. Submit /telemetry ────────────────────────────────────────────────────
+  const success = Math.random() > 0.05; // 95% simulated success
+  try {
+    const telRes = await fetch('/api/telemetry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        protocol_version: '1.0',
+        id:               uuid(),
+        semantic_envelope: envelope,
+        available_tools:  [],
+        model_used:       recommended_model === 'route-err' ? AVAILABLE_MODELS[0] : recommended_model,
+        tokens_input,
+        tokens_output,
+        duration_ms,
+        success,
+        retry_count:    0,
+        outcome_signal: success ? 'compliant' : 'failed',
+      }),
+    });
+
+    telStatus = telRes.ok ? 'ok' : `err-${telRes.status}`;
+    if (!telRes.ok) errorCount++;
+  } catch (e) {
+    telStatus = 'err';
+    errorCount++;
+  }
+
+  finaliseRow(row, telStatus);
+  updateStats();
+}
+
+// ─── DOM helpers ─────────────────────────────────────────────────────────────
+
+function clearEmpty() {
+  const feed = document.getElementById('feed');
+  const empties = feed.querySelectorAll('tr td[colspan]');
+  empties.forEach(td => td.closest('tr').remove());
+}
+
+function insertRow(rowSeq, env, tokIn, tokOut) {
+  clearEmpty();
+  const feed = document.getElementById('feed');
+  const tr = document.createElement('tr');
+  tr.className = 'new-row';
+  tr.dataset.seq = rowSeq;
+
+  const ctxClass = `ctx-${env.context_length_bucket}`;
+  const badgeClass = `badge-${env.task_type}`;
+
+  tr.innerHTML = `
+    <td class="seq">${rowSeq}</td>
+    <td class="time">${now()}</td>
+    <td><span class="badge ${badgeClass}">${env.task_type}</span></td>
+    <td class="struct">${env.structure_type}</td>
+    <td class="${ctxClass}">${env.context_length_bucket}</td>
+    <td class="conf">${env.complexity_score.toFixed(2)}</td>
+    <td class="num">${tokIn.toLocaleString()}</td>
+    <td class="num">${tokOut.toLocaleString()}</td>
+    <td class="model-cell"><span class="muted">routing…</span></td>
+    <td class="conf-cell">—</td>
+    <td class="flag-cell">—</td>
+    <td class="trace">—</td>
+    <td class="tel-cell"><span class="status-pend">…</span></td>
+  `;
+
+  // Prepend so newest is at top
+  feed.insertBefore(tr, feed.firstChild);
+
+  // Cap table at 200 rows
+  const rows = feed.querySelectorAll('tr');
+  if (rows.length > 200) rows[rows.length - 1].remove();
+
+  return tr;
+}
+
+function updateRow(tr, model, conf, explore, trace) {
+  tr.querySelector('.model-cell').innerHTML =
+    model === 'route-err'
+      ? `<span class="status-err">${model}</span>`
+      : `<span class="model ${modelClass(model)}">${modelLabel(model)}</span>`;
+
+  tr.querySelector('.conf-cell').textContent = conf !== null ? `${(conf * 100).toFixed(0)}%` : '—';
+
+  tr.querySelector('.flag-cell').innerHTML = explore
+    ? '<span class="flag-explore">EXPLORE</span>'
+    : '<span class="flag-exploit">exploit</span>';
+
+  tr.querySelector('.trace').textContent = trace || '—';
+}
+
+function finaliseRow(tr, telStatus) {
+  tr.querySelector('.tel-cell').innerHTML = telStatus === 'ok'
+    ? '<span class="status-ok">✓</span>'
+    : `<span class="status-err">${telStatus}</span>`;
+}
+
+// ─── Stats update ─────────────────────────────────────────────────────────────
+
+function updateStats() {
+  document.getElementById('stat-total').textContent   = totalCalls.toLocaleString();
+  document.getElementById('stat-errors').textContent  = errorCount.toLocaleString();
+
+  if (totalCalls > 0) {
+    const pct = Math.round(exploreCount / totalCalls * 100);
+    document.getElementById('stat-explore').textContent = pct + '%';
+  }
+
+  if (confCount > 0) {
+    document.getElementById('stat-conf').textContent = (confSum / confCount * 100).toFixed(0) + '%';
+  }
+}
+
+// ─── Controls ────────────────────────────────────────────────────────────────
+
+function startSim() {
+  if (running) return;
+  running = true;
+
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled  = false;
+  document.getElementById('dot').className      = 'dot running';
+  document.getElementById('stat-status').textContent  = 'Running';
+  document.getElementById('stat-status').style.color  = 'var(--green)';
+
+  const ms = parseInt(document.getElementById('interval-select').value, 10);
+  tick(); // fire immediately
+  timer = setInterval(tick, ms);
+}
+
+function stopSim() {
+  if (!running) return;
+  running = false;
+  clearInterval(timer);
+  timer = null;
+
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled  = true;
+  document.getElementById('dot').className      = 'dot stopping';
+  document.getElementById('stat-status').textContent  = `Stopped — ${totalCalls} calls`;
+  document.getElementById('stat-status').style.color  = 'var(--amber)';
+}
+
+function clearTable() {
+  const feed = document.getElementById('feed');
+  feed.innerHTML = `
+    <tr>
+      <td colspan="13">
+        <div class="empty">Press <strong>▶ Start</strong> to begin generating synthetic LLM calls</div>
+      </td>
+    </tr>`;
+
+  // Reset counters
+  seq = 0; totalCalls = 0; exploreCount = 0;
+  errorCount = 0; confSum = 0; confCount = 0;
+
+  document.getElementById('stat-total').textContent   = '0';
+  document.getElementById('stat-explore').textContent = '—';
+  document.getElementById('stat-errors').textContent  = '0';
+  document.getElementById('stat-conf').textContent    = '—';
+}
+</script>
+</body>
+</html>
