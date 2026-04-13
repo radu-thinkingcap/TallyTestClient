@@ -254,6 +254,14 @@
       <option value="10000">10 s</option>
     </select>
 
+    <label for="batch-select">Batch</label>
+    <select id="batch-select">
+      <option value="1" selected>1×</option>
+      <option value="5">5×</option>
+      <option value="10">10×</option>
+      <option value="20">20×</option>
+    </select>
+
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
       <input type="checkbox" id="chk-telemetry" checked style="accent-color:var(--accent);" />
       <span>Send telemetry</span>
@@ -284,6 +292,10 @@
     <div class="stat-value" id="stat-conf">—</div>
   </div>
   <div class="stat">
+    <div class="stat-label">Clusters Seen</div>
+    <div class="stat-value" id="stat-clusters">0</div>
+  </div>
+  <div class="stat">
     <div class="stat-label">Status</div>
     <div class="stat-value" id="stat-status" style="font-size:13px;color:var(--muted)">Idle</div>
   </div>
@@ -312,7 +324,7 @@
     <tbody id="feed">
       <tr>
         <td colspan="13">
-          <div class="empty">Press <strong>▶ Start</strong> to begin generating synthetic LLM calls</div>
+          <div class="empty">Press <strong>▶ Start</strong> to begin generating synthetic LLM calls — use <strong>Batch</strong> for faster priming</div>
         </td>
       </tr>
     </tbody>
@@ -341,22 +353,10 @@ const AVAILABLE_MODELS = [
   'gemini-1.5-pro',
 ];
 
-// Fixed scenario profiles — small set so calls accumulate on the same clusters
-// Each profile has fixed envelope fields (no randomisation of shape-altering dimensions)
-// Only token counts and duration vary within a profile.
-const SCENARIOS = [
-  { id: 'code-debug',      weight: 20, task_type: 'code',           structure_type: 'multi-step',      complexity_score: 0.70, context_length_bucket: 'medium', estimated_tokens_bucket: 'medium', determinism_required: false },
-  { id: 'code-gen',        weight: 18, task_type: 'code',           structure_type: 'tool-call-heavy', complexity_score: 0.60, context_length_bucket: 'medium', estimated_tokens_bucket: 'large',  determinism_required: false },
-  { id: 'classification',  weight: 20, task_type: 'classification', structure_type: 'qa',              complexity_score: 0.20, context_length_bucket: 'small',  estimated_tokens_bucket: 'small',  determinism_required: false },
-  { id: 'deep-reasoning',  weight: 10, task_type: 'reasoning',      structure_type: 'multi-step',      complexity_score: 0.85, context_length_bucket: 'large',  estimated_tokens_bucket: 'large',  determinism_required: false },
-  { id: 'retrieval-qa',    weight: 18, task_type: 'retrieval',      structure_type: 'qa',              complexity_score: 0.35, context_length_bucket: 'medium', estimated_tokens_bucket: 'medium', determinism_required: false },
-  { id: 'agentic-browser', weight: 8,  task_type: 'agentic',        structure_type: 'tool-call-heavy', complexity_score: 0.90, context_length_bucket: 'xlarge', estimated_tokens_bucket: 'xlarge', determinism_required: false },
-  { id: 'long-synthesis',  weight: 8,  task_type: 'synthesis',      structure_type: 'long-form',       complexity_score: 0.65, context_length_bucket: 'large',  estimated_tokens_bucket: 'xlarge', determinism_required: false },
-  { id: 'math-proof',      weight: 6,  task_type: 'math',           structure_type: 'multi-step',      complexity_score: 0.80, context_length_bucket: 'medium', estimated_tokens_bucket: 'large',  determinism_required: true  },
-  { id: 'creative-write',  weight: 10, task_type: 'creative',       structure_type: 'long-form',       complexity_score: 0.50, context_length_bucket: 'medium', estimated_tokens_bucket: 'xlarge', determinism_required: false },
-];
-
-const SCENARIO_TOTAL_WEIGHT = SCENARIOS.reduce((s, x) => s + x.weight, 0);
+// Full random shape dimensions — 8 × 4 × 4 × 4 × 4 × 2 = 8,192 possible clusters
+const TASK_TYPES   = ['classification', 'reasoning', 'creative', 'code', 'math', 'retrieval', 'synthesis', 'agentic'];
+const STRUCT_TYPES = ['qa', 'multi-step', 'tool-call-heavy', 'long-form'];
+const CTX_BUCKETS  = ['small', 'medium', 'large', 'xlarge'];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -368,6 +368,7 @@ let exploreCount = 0;
 let errorCount   = 0;
 let confSum      = 0;
 let confCount    = 0;
+let clustersSet  = new Set();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -384,36 +385,50 @@ function now() {
   return new Date().toTimeString().slice(0, 8);
 }
 
-// ─── Scenario picker + envelope builder ──────────────────────────────────────
+// ─── Envelope builder (fully random) ─────────────────────────────────────────
 
-function pickScenario() {
-  let r = Math.random() * SCENARIO_TOTAL_WEIGHT;
-  for (const s of SCENARIOS) {
-    r -= s.weight;
-    if (r <= 0) return s;
-  }
-  return SCENARIOS[SCENARIOS.length - 1];
+// Mirrors Tally's complexity bucketing for cluster key computation
+function complexityBucket(score) {
+  if (score < 0.25) return 'low';
+  if (score < 0.50) return 'medium';
+  if (score < 0.75) return 'high';
+  return 'very-high';
+}
+
+// Cluster key mirrors the 6 shape-altering dimensions Tally hashes
+function clusterKey(env) {
+  return [
+    env.task_type,
+    env.structure_type,
+    complexityBucket(env.complexity_score),
+    env.context_length_bucket,
+    env.estimated_tokens_bucket,
+    String(env.determinism_required),
+  ].join('|');
 }
 
 function buildEnvelope() {
-  const scenario = pickScenario();
+  const task_type               = pick(TASK_TYPES);
+  const structure_type          = pick(STRUCT_TYPES);
+  const context_length_bucket   = pick(CTX_BUCKETS);
+  const estimated_tokens_bucket = pick(CTX_BUCKETS);
+  const complexity_score        = randFloat(0.10, 1.00);
+  const determinism_required    = Math.random() < 0.15;
 
-  // Token counts vary within the scenario's context bucket
-  const [tokMin, tokMax] = TOKEN_RANGES[scenario.context_length_bucket];
+  const [tokMin, tokMax] = TOKEN_RANGES[context_length_bucket];
   const tokens_input  = rand(tokMin, tokMax);
   const tokens_output = rand(OUTPUT_RANGE[0], OUTPUT_RANGE[1]);
   const duration_ms   = rand(300, 8000);
 
   return {
-    scenarioId: scenario.id,
     envelope: {
       schema_version:          '1.0',
-      task_type:               scenario.task_type,
-      structure_type:          scenario.structure_type,
-      complexity_score:        scenario.complexity_score,
-      context_length_bucket:   scenario.context_length_bucket,
-      estimated_tokens_bucket: scenario.estimated_tokens_bucket,
-      determinism_required:    scenario.determinism_required,
+      task_type,
+      structure_type,
+      complexity_score,
+      context_length_bucket,
+      estimated_tokens_bucket,
+      determinism_required,
       capability_tags:         [],
     },
     tokens_input,
@@ -450,15 +465,23 @@ function modelLabel(model) {
 // ─── Simulation tick ─────────────────────────────────────────────────────────
 
 async function tick() {
+  const batchSize = parseInt(document.getElementById('batch-select').value, 10) || 1;
+  await Promise.all(Array.from({ length: batchSize }, () => singleCall()));
+}
+
+async function singleCall() {
   seq++;
   totalCalls++;
   updateStats();
 
-  const { scenarioId, envelope, tokens_input, tokens_output, duration_ms } = buildEnvelope();
+  const { envelope, tokens_input, tokens_output, duration_ms } = buildEnvelope();
   const rowSeq = seq;
 
+  // Track unique clusters
+  clustersSet.add(clusterKey(envelope));
+
   // Insert pending row
-  const row = insertRow(rowSeq, scenarioId, envelope, tokens_input, tokens_output);
+  const row = insertRow(rowSeq, envelope, tokens_input, tokens_output);
 
   let recommended_model = '—';
   let conf = null;
@@ -545,7 +568,7 @@ function clearEmpty() {
   empties.forEach(td => td.closest('tr').remove());
 }
 
-function insertRow(rowSeq, scenarioId, env, tokIn, tokOut) {
+function insertRow(rowSeq, env, tokIn, tokOut) {
   clearEmpty();
   const feed = document.getElementById('feed');
   const tr = document.createElement('tr');
@@ -554,11 +577,12 @@ function insertRow(rowSeq, scenarioId, env, tokIn, tokOut) {
 
   const ctxClass = `ctx-${env.context_length_bucket}`;
   const badgeClass = `badge-${env.task_type}`;
+  const clusterTip = clusterKey(env);
 
   tr.innerHTML = `
     <td class="seq">${rowSeq}</td>
     <td class="time">${now()}</td>
-    <td><span class="badge ${badgeClass}" title="${scenarioId}">${env.task_type}</span></td>
+    <td><span class="badge ${badgeClass}" title="${clusterTip}">${env.task_type}</span></td>
     <td class="struct">${env.structure_type}</td>
     <td class="${ctxClass}">${env.context_length_bucket}</td>
     <td class="conf">${env.complexity_score.toFixed(2)}</td>
@@ -606,8 +630,9 @@ function finaliseRow(tr, telStatus) {
 // ─── Stats update ─────────────────────────────────────────────────────────────
 
 function updateStats() {
-  document.getElementById('stat-total').textContent   = totalCalls.toLocaleString();
-  document.getElementById('stat-errors').textContent  = errorCount.toLocaleString();
+  document.getElementById('stat-total').textContent    = totalCalls.toLocaleString();
+  document.getElementById('stat-errors').textContent   = errorCount.toLocaleString();
+  document.getElementById('stat-clusters').textContent = clustersSet.size.toLocaleString();
 
   if (totalCalls > 0) {
     const pct = Math.round(exploreCount / totalCalls * 100);
@@ -661,11 +686,13 @@ function clearTable() {
   // Reset counters
   seq = 0; totalCalls = 0; exploreCount = 0;
   errorCount = 0; confSum = 0; confCount = 0;
+  clustersSet = new Set();
 
-  document.getElementById('stat-total').textContent   = '0';
-  document.getElementById('stat-explore').textContent = '—';
-  document.getElementById('stat-errors').textContent  = '0';
-  document.getElementById('stat-conf').textContent    = '—';
+  document.getElementById('stat-total').textContent    = '0';
+  document.getElementById('stat-explore').textContent  = '—';
+  document.getElementById('stat-errors').textContent   = '0';
+  document.getElementById('stat-conf').textContent     = '—';
+  document.getElementById('stat-clusters').textContent = '0';
 }
 </script>
 </body>
