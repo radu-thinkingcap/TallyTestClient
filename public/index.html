@@ -422,10 +422,15 @@ function modelClass(model) {
 
 function modelLabel(model) {
   if (!model) return '—';
-  if (model.includes('gemini'))  return model.replace('gemini-', 'gemini-');
-  // Shorten Claude/OpenAI: take last 2 dash-segments
-  const parts = model.split('-');
-  return parts.length > 2 ? parts.slice(-2).join('-') : model;
+  const m = model.toLowerCase();
+  if (m.includes('opus'))          return 'claude-opus';
+  if (m.includes('sonnet'))        return 'claude-sonnet';
+  if (m.includes('haiku'))         return 'claude-haiku';
+  if (m.includes('gpt-4o-mini'))   return 'gpt-4o-mini';
+  if (m.includes('gpt-4o'))        return 'gpt-4o';
+  if (m.includes('gemini-1.5-pro'))return 'gemini-1.5-pro';
+  if (m.includes('gemini'))        return 'gemini';
+  return model;
 }
 
 // ─── Simulation tick ─────────────────────────────────────────────────────────
